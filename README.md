@@ -28,8 +28,8 @@ INSTALLATION
 
 1. Clone the Repository:
    git clone https://github.com/raman-chakkal/spotMP3.git
-   cd spotmp3
-
+   **cd spotmp3
+**
 2. Set Up a Virtual Environment:
    python -m venv .venv
    source .venv/bin/activate        (On Windows: .venv\Scripts\activate)
