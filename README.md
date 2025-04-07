@@ -27,7 +27,7 @@ REQUIREMENTS
 INSTALLATION
 
 1. Clone the Repository:
-   git clone https://github.com/your-username/spotmp3.git
+   git clone https://github.com/raman-chakkal/spotMP3.git
    cd spotmp3
 
 2. Set Up a Virtual Environment:
