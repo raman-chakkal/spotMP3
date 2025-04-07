@@ -2,37 +2,9 @@ import os
 import logging
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from queue import Queue
-from threading import Thread
 from PyQt6.QtCore import QThread, pyqtSignal
 from spotify_utils import authenticate_spotify, get_all_playlist_tracks, sanitize_name, write_download_results
 import time
-
-
-class WriteWorker(Thread):
-    """
-    A worker thread to handle post-download processing of files.
-    """
-    def __init__(self, write_queue):
-        super().__init__()
-        self.write_queue = write_queue
-        self.stop_flag = False
-
-    def run(self):
-        while not self.stop_flag or not self.write_queue.empty():
-            try:
-                file_path, _ = self.write_queue.get(timeout=1)
-                if not os.path.exists(file_path):
-                    logging.error(f"[ERROR] File not found during post-processing: {file_path}")
-                else:
-                    logging.info(f"[INFO] Post-processing file: {file_path}")
-                    # Perform any additional processing here (e.g., metadata updates)
-                self.write_queue.task_done()
-            except Exception as e:
-                logging.error(f"[ERROR] Error during post-processing: {e}")
-
-    def stop(self):
-        self.stop_flag = True
 
 
 class DownloadThread(QThread):
@@ -90,22 +62,16 @@ class DownloadThread(QThread):
         success_tracks = []
         failed_tracks = []
 
-        # Initialize the write queue and worker
-        write_queue = Queue()
-        write_worker = WriteWorker(write_queue)
-        write_worker.start()
-
         # Use ThreadPoolExecutor for parallel downloads
         with ThreadPoolExecutor(max_workers=4) as executor:
             futures = {
-                executor.submit(self.download_track, track["track"], download_folder, write_queue): track
+                executor.submit(self.download_track, track["track"], download_folder): track
                 for track in tracks
             }
 
             for i, future in enumerate(as_completed(futures)):
                 if self.cancel_flag:
                     self.status_signal.emit("❌ Download cancelled!")
-                    write_worker.stop()
                     return success_tracks, failed_tracks
 
                 try:
@@ -126,50 +92,68 @@ class DownloadThread(QThread):
                 # Add a small delay to avoid overwhelming the system
                 time.sleep(0.5)
 
-        # Wait for all write operations to complete
-        write_queue.join()
-        write_worker.stop()
-
         return success_tracks, failed_tracks
 
-    def download_track(self, track, download_folder, write_queue, retries=3):
+    def download_track(self, track, download_folder, retries=3):
         """Download a single track."""
-        sanitized_track = sanitize_name(track["name"])
-        artist = sanitize_name(track["artists"][0]["name"])
+        track_name = track["name"]  # Use the original track name
+        artist_name = track["artists"][0]["name"]  # Use the original artist name
 
         # Check if already downloaded
-        if self.is_track_downloaded(download_folder, sanitized_track, artist):
-            return {"track": f"{sanitized_track} - {artist}", "status": "Already Downloaded"}
+        if self.is_track_downloaded(download_folder, track_name, artist_name):
+            return {"track": f"{track_name} - {artist_name}", "status": "Already Downloaded"}
 
         # Construct the search query
-        search_query = f"{track['name']} {track['artists'][0]['name']} {track['album']['name']}"
+        search_query = f"{track_name} {artist_name} {track['album']['name']}"
         command = f'spotdl download "{search_query}" --output "{download_folder}" --bitrate {self.quality} --preload'
 
         for attempt in range(retries):
             try:
+                logging.info(f"[INFO] Running command: {command}")
                 result = subprocess.run(command, shell=True, capture_output=True, text=True)
                 logging.info(f"[INFO] spotdl stdout: {result.stdout}")
                 logging.error(f"[ERROR] spotdl stderr: {result.stderr}")
 
                 if result.returncode == 0:
-                    file_path = os.path.join(download_folder, f"{sanitized_track} - {artist}.mp3")
-                    if os.path.exists(file_path):
-                        write_queue.put((file_path, None))  # Add file to the write queue
-                        return {"track": f"{sanitized_track} - {artist}", "status": "Downloaded"}
+                    # Search for the downloaded file in the folder
+                    downloaded_file = self.find_downloaded_file(download_folder, track_name, artist_name)
+                    if downloaded_file:
+                        return {"track": f"{track_name} - {artist_name}", "status": "Downloaded"}
                     else:
-                        logging.error(f"[ERROR] File not found after download: {file_path}")
+                        logging.warning(f"[WARNING] File not found after download: {track_name} - {artist_name}")
+                else:
+                    logging.error(f"[ERROR] spotdl failed with return code {result.returncode}")
             except Exception as e:
-                logging.error(f"[ERROR] Attempt {attempt + 1}: Error downloading {sanitized_track} - {artist}: {e}")
+                logging.error(f"[ERROR] Attempt {attempt + 1}: {e}")
+            time.sleep(2)  # Add a delay before retrying
 
-        return {"track": f"{sanitized_track} - {artist}", "status": "Failed", "error": "Download failed after retries"}
+        return {"track": f"{track_name} - {artist_name}", "status": "Failed", "error": "Download failed after retries"}
 
-    def is_track_downloaded(self, download_folder, sanitized_track, artist):
+    def is_track_downloaded(self, download_folder, track_name, artist_name):
         """Check if the track is already downloaded."""
         existing_files = [
             f for f in os.listdir(download_folder)
-            if sanitized_track in f and artist in f and f.endswith(".mp3")
+            if track_name in f and artist_name in f and f.endswith(".mp3")
         ]
         return bool(existing_files)
+
+    def find_downloaded_file(self, download_folder, track_name, artist_name):
+        """
+        Search for a downloaded file in the folder that matches the track and artist name.
+
+        :param download_folder: The folder where the file is expected to be downloaded.
+        :param track_name: The original track name from Spotify.
+        :param artist_name: The original artist name from Spotify.
+        :return: The file path if found, otherwise None.
+        """
+        try:
+            for file_name in os.listdir(download_folder):
+                # Check if the file name contains the original track and artist name
+                if track_name in file_name and artist_name in file_name and file_name.endswith(".mp3"):
+                    return os.path.join(download_folder, file_name)
+        except Exception as e:
+            logging.error(f"[ERROR] Error searching for downloaded file: {e}")
+        return None
 
     def cancel(self):
         """Cancel the download process."""
