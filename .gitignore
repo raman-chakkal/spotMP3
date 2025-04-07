@@ -1,39 +1,8 @@
 # Virtual environment
 .venv/
 
-# Python cache files
+# cache
 __pycache__/
-*.py[cod]
-*.pyo
-
-# IDE-specific files
-.idea/
-.vscode/
-
-# OS-specific files
-.DS_Store
-Thumbs.db
-
-# Logs and temporary files
-*.log
-*.tmp
 
 # Config files
 config.ini
-
-# Compiled files
-*.so
-*.dll
-*.dylib
-*.pyd
-
-# Test coverage and reports
-htmlcov/
-.coverage
-*.cover
-*.coverage.*
-
-# Distribution files
-dist/
-build/
-*.egg-info/
